@@ -4,17 +4,17 @@ import time
 import datetime
 import asyncio
 from collections import defaultdict
-import os  # Needed to read environment variables from Railway
+import os
 
 # --- CONFIGURATION ---
-# Railway securely handles this variable. Do not hardcode your token here!
+# Railway securely injects your token here from your dashboard variables
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 LOG_CHANNEL_ID = 1508413816914837624  
 BYPASS_ROLE_ID = 1468249091481010197  
 WHITELISTED_USERS = [1394753272492851322, 1429477060577067019]
 
 if not BOT_TOKEN:
-    print("Error: BOT_TOKEN environment variable not found.")
+    print("Error: BOT_TOKEN environment variable is missing in Railway.")
     exit(1)
 
 intents = discord.Intents.default()
@@ -22,12 +22,12 @@ intents.messages = True
 intents.message_content = True
 intents.members = True
 intents.guilds = True
-intents.moderation = True
-intents.voice_states = True 
+intents.moderation = True 
+intents.voice_states = True
 
 bot = commands.Bot(command_prefix="kin.", intents=intents)
 
-# --- LOCAL MEMORY STORAGE ---
+# Thread-safe local memory storage
 kick_tracker = defaultdict(list)
 ban_tracker = defaultdict(list)
 spam_tracker = defaultdict(list)
@@ -37,32 +37,42 @@ join_history = []
 leave_history = []
 
 # --- HELPERS ---
-def is_whitelisted(guild, user):
+def is_whitelisted(guild: discord.Guild, user: discord.abc.User) -> bool:
     if user.id in WHITELISTED_USERS:
         return True
     member = guild.get_member(user.id)
-    if member and any(r.id == BYPASS_ROLE_ID for r in member.roles):
+    if member and any(role.id == BYPASS_ROLE_ID for role in member.roles):
         return True
     return False
 
-def check_rate_limit(user_id, tracker, limit, window):
+def check_rate_limit(user_id: int, tracker: dict, limit: int, window: int = 5) -> bool:
     now = time.time()
     tracker[user_id] = [t for t in tracker[user_id] if now - t <= window]
     tracker[user_id].append(now)
     return len(tracker[user_id]) >= limit
 
-async def send_mod_log(guild, action, actor, target, details):
+async def send_mod_log(guild: discord.Guild, action: str, actor: discord.abc.User, target: str, details: str):
     log_channel = guild.get_channel(LOG_CHANNEL_ID)
-    if not log_channel: return
-    
-    embed = discord.Embed(title=f"Security Trigger: {action}", description=details, color=0x2B2D31, timestamp=discord.utils.utcnow())
+    if not log_channel:
+        return
+
+    embed = discord.Embed(
+        title=f"Security Trigger: {action}",
+        description=details,
+        color=0x2B2D31,
+        timestamp=discord.utils.utcnow()
+    )
     embed.add_field(name="Triggered By", value=f"{actor.mention}\nID: `{actor.id}`", inline=True)
     embed.add_field(name="Target", value=target, inline=True)
-    embed.add_field(name="Time Occurred", value=f"<t:{int(time.time())}:F>\n(<t:{int(time.time())}:R>)", inline=False)
+    
+    current_time = int(time.time())
+    embed.add_field(name="Time Occurred", value=f"<t:{current_time}:F>\n(<t:{current_time}:R>)", inline=False)
     embed.set_footer(text="Automated Security System")
     
-    try: await log_channel.send(embed=embed)
-    except discord.HTTPException: pass
+    try:
+        await log_channel.send(embed=embed)
+    except discord.HTTPException:
+        pass
 
 # --- RICH PRESENCE LOOP ---
 @tasks.loop(seconds=15)
@@ -103,17 +113,19 @@ async def scan(ctx):
     embed = discord.Embed(title="Server Daily Scan", color=0x2B2D31)
     embed.add_field(name="Users who joined today", value=str(joins), inline=False)
     embed.add_field(name="Users who left today", value=str(leaves), inline=False)
-    
     await ctx.send(embed=embed)
 
 @bot.command(name="kill")
 @commands.has_permissions(ban_members=True)
 async def kill(ctx, target: discord.User):
     target_member = ctx.guild.get_member(target.id)
+    
     if target_member:
+        # Hierarchy check: Cannot ban someone with an equal or higher top role
         if ctx.author.top_role.position <= target_member.top_role.position:
             await ctx.send("ur too under lmfao")
             return
+            
     try:
         await ctx.guild.ban(target, reason="Hardban: Security Kill Command")
         await ctx.send(f"{target.mention} died.")
@@ -141,6 +153,7 @@ async def on_thread_create(thread: discord.Thread):
                 owner.timeout(datetime.timedelta(minutes=1), reason="Mass Thread Spam"),
                 thread.parent.send(f"stfu {owner.mention}.")
             )
+            await send_mod_log(guild, "Mass Thread Spam Halted", owner, "Multiple Threads", "User exceeded thread creation limits. Threads wiped and user timed out.")
         except discord.HTTPException: pass
 
 # --- ANTI-SPAM (TEXT & POLLS) ---
@@ -152,6 +165,7 @@ async def on_message(message: discord.Message):
 
     uid = message.author.id
 
+    # Poll Spam Check (3 polls in 5s)
     if getattr(message, 'poll', None):
         if check_rate_limit(uid, poll_tracker, limit=3, window=5):
             poll_tracker[uid].clear()
@@ -161,9 +175,11 @@ async def on_message(message: discord.Message):
                     message.author.timeout(datetime.timedelta(minutes=1), reason="Mass Poll Spam"),
                     message.channel.send(f"stfu {message.author.mention}.")
                 )
+                await send_mod_log(message.guild, "Mass Poll Spam Muted", message.author, f"{message.channel.mention}", "Polls purged and user timed out.")
             except discord.HTTPException: pass
             return
 
+    # Text Spam Check (5 messages in 5s)
     if check_rate_limit(uid, spam_tracker, limit=5, window=5):
         spam_tracker[uid].clear()
         try:
@@ -172,6 +188,7 @@ async def on_message(message: discord.Message):
                 message.author.timeout(datetime.timedelta(minutes=1), reason="Mass Spam Execution"),
                 message.channel.send(f"stfu {message.author.mention}.")
             )
+            await send_mod_log(message.guild, "Mass Spam Muted", message.author, f"{message.channel.mention}", "Messages purged and user timed out.")
         except discord.HTTPException: pass
         return 
 
@@ -241,3 +258,4 @@ async def on_ready():
         presence_loop.start()
 
 bot.run(BOT_TOKEN)
+
