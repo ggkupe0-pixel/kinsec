@@ -29,7 +29,7 @@ intents.messages = True
 intents.message_content = True
 intents.members = True
 intents.guilds = True
-intents.guild_moderation = True
+intents.moderation = True
 intents.voice_states = True
 
 bot = commands.Bot(command_prefix="kin.", intents=intents)
