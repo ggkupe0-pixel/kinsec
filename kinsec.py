@@ -1,15 +1,16 @@
-import discord
-from discord.ext import commands, tasks
 import time
 import datetime
 import asyncio
 from collections import defaultdict
 import os
+import random
+import discord
+from discord.ext import commands, tasks
 
 # --- CONFIGURATION ---
-# Railway securely injects your token here from your dashboard variables
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
-LOG_CHANNEL_ID = 1508413816914837624  
+LOG_CHANNEL_ID = 1508413816914837624       # Main channel for security & mod logs
+DM_LOG_CHANNEL_ID = 1501262044127690913     # REPLACE THIS with your new DM logs channel ID
 BYPASS_ROLE_ID = 1468249091481010197  
 WHITELISTED_USERS = [1394753272492851322, 1429477060577067019]
 
@@ -23,11 +24,11 @@ intents.message_content = True
 intents.members = True
 intents.guilds = True
 intents.moderation = True 
-intents.voice_states = True
+intents.voice_states = True 
 
 bot = commands.Bot(command_prefix="kin.", intents=intents)
 
-# Thread-safe local memory storage
+# --- LOCAL MEMORY STORAGE ---
 kick_tracker = defaultdict(list)
 ban_tracker = defaultdict(list)
 spam_tracker = defaultdict(list)
@@ -40,9 +41,10 @@ leave_history = []
 def is_whitelisted(guild: discord.Guild, user: discord.abc.User) -> bool:
     if user.id in WHITELISTED_USERS:
         return True
-    member = guild.get_member(user.id)
-    if member and any(role.id == BYPASS_ROLE_ID for role in member.roles):
-        return True
+    if guild:
+        member = guild.get_member(user.id)
+        if member and any(role.id == BYPASS_ROLE_ID for role in member.roles):
+            return True
     return False
 
 def check_rate_limit(user_id: int, tracker: dict, limit: int, window: int = 5) -> bool:
@@ -78,11 +80,11 @@ async def send_mod_log(guild: discord.Guild, action: str, actor: discord.abc.Use
 @tasks.loop(seconds=15)
 async def presence_loop():
     members = sum(g.member_count for g in bot.guilds)
-    vcs = sum(len(g.voice_channels) for g in bot.guilds)
+    vc_members = sum(len(vc.members) for g in bot.guilds for vc in g.voice_channels)
     
     activities = [
         discord.Streaming(name="/rougekin", url="https://www.twitch.tv/discord"),
-        discord.Activity(type=discord.ActivityType.watching, name=f"{vcs} vc{'s' if vcs != 1 else ''}"),
+        discord.Activity(type=discord.ActivityType.watching, name=f"{vc_members} in vc"),
         discord.Activity(type=discord.ActivityType.watching, name=f"{members} members")
     ]
     
@@ -121,7 +123,7 @@ async def kill(ctx, target: discord.User):
     target_member = ctx.guild.get_member(target.id)
     
     if target_member:
-        # Hierarchy check: Cannot ban someone with an equal or higher top role
+        # Hierarchy check
         if ctx.author.top_role.position <= target_member.top_role.position:
             await ctx.send("ur too under lmfao")
             return
@@ -137,125 +139,38 @@ async def kill_error(ctx, error):
     if isinstance(error, commands.MissingPermissions):
         await ctx.send("u dont have permission fag")
 
-# --- ANTI-SPAM (THREADS) ---
-@bot.event
-async def on_thread_create(thread: discord.Thread):
-    guild = thread.guild
-    owner = thread.owner
-    if not owner or owner.bot or is_whitelisted(guild, owner): return
-
-    uid = owner.id
-    if check_rate_limit(uid, thread_tracker, limit=3, window=5):
-        thread_tracker[uid].clear()
-        try:
-            await asyncio.gather(
-                thread.delete(),
-                owner.timeout(datetime.timedelta(minutes=1), reason="Mass Thread Spam"),
-                thread.parent.send(f"stfu {owner.mention}.")
-            )
-            await send_mod_log(guild, "Mass Thread Spam Halted", owner, "Multiple Threads", "User exceeded thread creation limits. Threads wiped and user timed out.")
-        except discord.HTTPException: pass
-
-# --- ANTI-SPAM (TEXT & POLLS) ---
-@bot.event
-async def on_message(message: discord.Message):
-    if not message.guild or message.author.bot or is_whitelisted(message.guild, message.author):
-        await bot.process_commands(message)
+@bot.command(name="call")
+async def call(ctx, target: discord.User, *, message: str):
+    # Strict whitelist check
+    if ctx.author.id not in WHITELISTED_USERS:
+        await ctx.send("u dont have permission fag")
         return
 
-    uid = message.author.id
+    delivered = False
+    delivery_status_details = "Message delivered successfully."
 
-    # Poll Spam Check (3 polls in 5s)
-    if getattr(message, 'poll', None):
-        if check_rate_limit(uid, poll_tracker, limit=3, window=5):
-            poll_tracker[uid].clear()
-            try:
-                await asyncio.gather(
-                    message.channel.purge(limit=10, check=lambda m: getattr(m, 'poll', None) and m.author == message.author),
-                    message.author.timeout(datetime.timedelta(minutes=1), reason="Mass Poll Spam"),
-                    message.channel.send(f"stfu {message.author.mention}.")
-                )
-                await send_mod_log(message.guild, "Mass Poll Spam Muted", message.author, f"{message.channel.mention}", "Polls purged and user timed out.")
-            except discord.HTTPException: pass
-            return
+    try:
+        await target.send(message)
+        delivered = True
+    except discord.Forbidden:
+        delivery_status_details = "Failed: User has DMs disabled or has blocked the bot."
+    except discord.HTTPException as e:
+        delivery_status_details = f"Failed: Network or API error ({e})"
 
-    # Text Spam Check (5 messages in 5s)
-    if check_rate_limit(uid, spam_tracker, limit=5, window=5):
-        spam_tracker[uid].clear()
-        try:
-            await asyncio.gather(
-                message.channel.purge(limit=10, check=lambda m: m.author == message.author),
-                message.author.timeout(datetime.timedelta(minutes=1), reason="Mass Spam Execution"),
-                message.channel.send(f"stfu {message.author.mention}.")
-            )
-            await send_mod_log(message.guild, "Mass Spam Muted", message.author, f"{message.channel.mention}", "Messages purged and user timed out.")
-        except discord.HTTPException: pass
-        return 
+    embed = discord.Embed(
+        title="Direct Message Execution Log",
+        description="A direct message command was triggered and processed.",
+        color=0x2B2D31,
+        timestamp=discord.utils.utcnow()
+    )
+    embed.add_field(name="Target User", value=f"{target.mention} ({target.name})", inline=True)
+    embed.add_field(name="Target ID", value=f"`{target.id}`", inline=True)
+    embed.add_field(name="Executed By", value=f"{ctx.author.mention} (`{ctx.author.id}`)", inline=False)
+    
+    embed.add_field(name="Delivery Status", value="DELIVERED" if delivered else "FAILED", inline=True)
+    embed.add_field(name="Delivery Details", value=delivery_status_details, inline=True)
+    
+    embed.add_field(name="Message Payload", value=f"
+http://googleusercontent.com/immersive_entry_chip/0
 
-    await bot.process_commands(message)
-
-# --- ANTI-NUKE & ANTI-BOT (AUDIT LOGS) ---
-@bot.event
-async def on_audit_log_entry_create(entry: discord.AuditLogEntry):
-    guild = entry.guild
-    actor = entry.user
-    if actor.id == bot.user.id or is_whitelisted(guild, actor): return
-
-    if entry.action == discord.AuditLogAction.kick:
-        if check_rate_limit(actor.id, kick_tracker, limit=5, window=5):
-            await guild.ban(actor, reason="Security: Mass Kick")
-
-    elif entry.action == discord.AuditLogAction.ban:
-        if check_rate_limit(actor.id, ban_tracker, limit=3, window=5):
-            await guild.ban(actor, reason="Security: Mass Ban")
-
-    elif entry.action == discord.AuditLogAction.bot_add:
-        unauthorized_bot = entry.target
-        if unauthorized_bot and getattr(unauthorized_bot, 'bot', False):
-            try: await actor.send("you are not slick.")
-            except discord.HTTPException: pass
-            try:
-                await asyncio.gather(
-                    guild.ban(actor, reason="Security Protocol: Added Unauthorized Bot"),
-                    guild.kick(unauthorized_bot, reason="Security Protocol: Unauthorized Bot")
-                )
-                await send_mod_log(guild, "Unauthorized Bot", actor, f"<@{unauthorized_bot.id}>", "Banned inviter and kicked bot.")
-            except discord.HTTPException: pass
-
-    elif entry.action == discord.AuditLogAction.member_role_update:
-        if hasattr(entry.after, 'roles') and entry.target:
-            for role in entry.after.roles:
-                if role.permissions.administrator:
-                    target_member = guild.get_member(entry.target.id)
-                    if target_member:
-                        try:
-                            await asyncio.gather(
-                                target_member.remove_roles(role, reason="Illegal Admin Assignment"),
-                                guild.ban(actor, reason="Unauthorized Admin Role Lending")
-                            )
-                        except discord.HTTPException: pass
-
-    elif entry.action == discord.AuditLogAction.role_update:
-        if hasattr(entry.after, 'permissions') and entry.target:
-            if entry.after.permissions.administrator and not entry.before.permissions.administrator:
-                role = guild.get_role(entry.target.id)
-                if role:
-                    try:
-                        await asyncio.gather(
-                            role.edit(permissions=entry.before.permissions, reason="Illegal Admin Injection"),
-                            guild.ban(actor, reason="Unauthorized Admin Permission Injection")
-                        )
-                    except discord.HTTPException: pass
-
-    elif entry.action in (discord.AuditLogAction.channel_delete, discord.AuditLogAction.role_delete):
-        try: await guild.ban(actor, reason="Anti Nuke: Structural Destruction Protection")
-        except discord.HTTPException: pass
-
-@bot.event
-async def on_ready():
-    print(f"Kinsec Active. Logged in as: {bot.user}")
-    if not presence_loop.is_running():
-        presence_loop.start()
-
-bot.run(BOT_TOKEN)
 
