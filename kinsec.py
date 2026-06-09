@@ -349,8 +349,8 @@ async def call(ctx, target: discord.User, *, message: str):
     embed.add_field(name="Executed By", value=f"{ctx.author.mention} (`{ctx.author.id}`)", inline=False)
     embed.add_field(name="Delivery Status", value="DELIVERED" if delivered else "FAILED", inline=True)
     embed.add_field(name="Delivery Details", value=delivery_status_details, inline=True)
-    embed.add_field(name="Message Payload", value=f"```{message[:1000]}
-```", inline=False)
+    embed.add_field(name="Message Payload", value=f"```\n{message[:1000]}\n```",
+    inline=False)
     embed.set_footer(text="Kinsec Security Core")
 
     log_channel = ctx.guild.get_channel(LOG_CHANNEL_ID)
