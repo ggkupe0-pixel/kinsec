@@ -9,7 +9,7 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import aiohttp
 import json
-import random
+import re
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -208,74 +208,6 @@ async def get_audit_log_actor(
     return None
 
 
-async def fetch_profile_picture(username: str, platform: str) -> Optional[str]:
-    """Fetch profile picture URL for various platforms."""
-    try:
-        if platform == "roblox":
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"https://api.roblox.com/users/get-by-username?username={username}") as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data and 'Id' in data:
-                            user_id = data['Id']
-                            async with session.get(f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=420x420&format=Png") as img_resp:
-                                if img_resp.status == 200:
-                                    img_data = await img_resp.json()
-                                    if img_data and 'data' in img_data and len(img_data['data']) > 0:
-                                        return img_data['data'][0]['imageUrl']
-    except Exception:
-        pass
-    return None
-
-
-def generate_fake_stats(platform: str, username: str) -> Dict[str, any]:
-    """Generate realistic-looking statistics for social media profiles."""
-    seed = sum(ord(c) for c in username)
-    random.seed(seed)
-    
-    stats = {
-        "followers": 0,
-        "following": 0,
-        "posts": 0,
-        "likes": 0,
-        "views": 0
-    }
-    
-    if platform == "instagram":
-        stats["followers"] = random.randint(100, 50000)
-        stats["following"] = random.randint(50, 5000)
-        stats["posts"] = random.randint(10, 5000)
-        stats["likes"] = random.randint(1000, 1000000)
-    elif platform == "tiktok":
-        stats["followers"] = random.randint(1000, 1000000)
-        stats["following"] = random.randint(100, 10000)
-        stats["posts"] = random.randint(50, 10000)
-        stats["likes"] = random.randint(10000, 10000000)
-        stats["views"] = random.randint(100000, 50000000)
-    elif platform == "facebook":
-        stats["followers"] = random.randint(100, 100000)
-        stats["following"] = random.randint(50, 5000)
-        stats["posts"] = random.randint(10, 10000)
-        stats["likes"] = random.randint(100, 100000)
-    elif platform == "x":
-        stats["followers"] = random.randint(100, 1000000)
-        stats["following"] = random.randint(50, 10000)
-        stats["posts"] = random.randint(100, 50000)
-        stats["likes"] = random.randint(1000, 1000000)
-    elif platform == "roblox":
-        stats["followers"] = random.randint(10, 10000)
-        stats["following"] = random.randint(5, 1000)
-        stats["posts"] = random.randint(0, 100)
-        stats["visits"] = random.randint(100, 1000000)
-    elif platform == "spotify":
-        stats["followers"] = random.randint(10, 100000)
-        stats["following"] = random.randint(5, 1000)
-        stats["playlists"] = random.randint(1, 100)
-        stats["tracks"] = random.randint(10, 1000)
-    
-    return stats
-
-
 def format_number(num: int) -> str:
     """Format large numbers with K, M, B suffixes."""
     if num >= 1000000000:
@@ -286,6 +218,198 @@ def format_number(num: int) -> str:
         return f"{num/1000:.1f}K"
     else:
         return str(num)
+
+
+# --- SOCIAL MEDIA API FUNCTIONS ---
+async def fetch_instagram_data(username: str):
+    """Fetch Instagram profile data using public API."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Using Instagram's public API endpoint
+            url = f"https://www.instagram.com/{username}/?__a=1&__d=dis"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data and 'graphql' in data:
+                        user_data = data['graphql']['user']
+                        return {
+                            'followers': user_data.get('edge_followed_by', {}).get('count', 0),
+                            'following': user_data.get('edge_follow', {}).get('count', 0),
+                            'posts': user_data.get('edge_owner_to_timeline_media', {}).get('count', 0),
+                            'name': user_data.get('full_name', ''),
+                            'profile_pic': user_data.get('profile_pic_url_hd', user_data.get('profile_pic_url', ''))
+                        }
+    except Exception as e:
+        print(f"Instagram API error: {e}")
+    return None
+
+
+async def fetch_tiktok_data(username: str):
+    """Fetch TikTok profile data."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://www.tiktok.com/@{username}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Extract data from JSON-LD
+                    json_match = re.search(r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">(.*?)</script>', html)
+                    if json_match:
+                        data = json.loads(json_match.group(1))
+                        # Navigate to user data
+                        user_data = data.get('__DEFAULT_SCOPE__', {}).get('webapp.user-detail', {}).get('userInfo', {})
+                        if user_data and 'user' in user_data:
+                            user = user_data['user']
+                            stats = user_data.get('stats', {})
+                            return {
+                                'followers': stats.get('followerCount', 0),
+                                'following': stats.get('followingCount', 0),
+                                'posts': stats.get('videoCount', 0),
+                                'likes': stats.get('heartCount', 0),
+                                'name': user.get('nickname', ''),
+                                'profile_pic': user.get('avatarMedium', user.get('avatarThumb', ''))
+                            }
+    except Exception as e:
+        print(f"TikTok API error: {e}")
+    return None
+
+
+async def fetch_facebook_data(username: str):
+    """Fetch Facebook profile data."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Using Facebook's public graph API
+            url = f"https://graph.facebook.com/v18.0/{username}"
+            # Note: You need an access token for Facebook API
+            # This is a placeholder - you'll need to add your own token
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {
+                        'name': data.get('name', ''),
+                        'profile_pic': f"https://graph.facebook.com/{username}/picture?type=large"
+                    }
+    except Exception as e:
+        print(f"Facebook API error: {e}")
+    return None
+
+
+async def fetch_x_data(username: str):
+    """Fetch X/Twitter profile data."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Using unofficial X API
+            url = f"https://api.twitter.com/1.1/users/show.json?screen_name={username}"
+            headers = {
+                'Authorization': f'Bearer {os.getenv("TWITTER_BEARER_TOKEN", "")}',
+                'User-Agent': 'Mozilla/5.0'
+            }
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {
+                        'followers': data.get('followers_count', 0),
+                        'following': data.get('friends_count', 0),
+                        'posts': data.get('statuses_count', 0),
+                        'likes': data.get('favourites_count', 0),
+                        'name': data.get('name', ''),
+                        'profile_pic': data.get('profile_image_url_https', '').replace('_normal', '')
+                    }
+    except Exception as e:
+        print(f"X API error: {e}")
+    return None
+
+
+async def fetch_roblox_data(username: str):
+    """Fetch Roblox profile data."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Get user ID from username
+            async with session.get(f"https://api.roblox.com/users/get-by-username?username={username}") as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data and 'Id' in data:
+                        user_id = data['Id']
+                        
+                        # Get profile statistics
+                        async with session.get(f"https://friends.roblox.com/v1/users/{user_id}/friends/count") as friends_resp:
+                            followers = 0
+                            if friends_resp.status == 200:
+                                friends_data = await friends_resp.json()
+                                followers = friends_data.get('count', 0)
+                        
+                        async with session.get(f"https://users.roblox.com/v1/users/{user_id}") as user_resp:
+                            if user_resp.status == 200:
+                                user_data = await user_resp.json()
+                                
+                        # Get profile picture
+                        async with session.get(f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=420x420&format=Png") as img_resp:
+                            profile_pic = ''
+                            if img_resp.status == 200:
+                                img_data = await img_resp.json()
+                                if img_data and 'data' in img_data and len(img_data['data']) > 0:
+                                    profile_pic = img_data['data'][0]['imageUrl']
+                        
+                        # Get inventory count (items)
+                        async with session.get(f"https://inventory.roblox.com/v1/users/{user_id}/inventory?limit=1") as inv_resp:
+                            items = 0
+                            if inv_resp.status == 200:
+                                inv_data = await inv_resp.json()
+                                items = inv_data.get('total', 0)
+                        
+                        return {
+                            'followers': followers,
+                            'following': 0,  # Roblox doesn't expose following count easily
+                            'posts': items,
+                            'visits': 0,  # Not easily accessible
+                            'name': user_data.get('name', ''),
+                            'profile_pic': profile_pic
+                        }
+    except Exception as e:
+        print(f"Roblox API error: {e}")
+    return None
+
+
+async def fetch_spotify_data(username: str):
+    """Fetch Spotify profile data."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Spotify API requires authentication
+            # This is a placeholder - you'll need to set up Spotify API credentials
+            client_id = os.getenv("SPOTIFY_CLIENT_ID", "")
+            client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "")
+            
+            if client_id and client_secret:
+                # Get access token
+                auth = aiohttp.BasicAuth(client_id, client_secret)
+                async with session.post('https://accounts.spotify.com/api/token', 
+                                      data={'grant_type': 'client_credentials'},
+                                      auth=auth) as token_resp:
+                    if token_resp.status == 200:
+                        token_data = await token_resp.json()
+                        access_token = token_data.get('access_token')
+                        
+                        # Search for user
+                        headers = {'Authorization': f'Bearer {access_token}'}
+                        async with session.get(f"https://api.spotify.com/v1/users/{username}", headers=headers) as resp:
+                            if resp.status == 200:
+                                data = await resp.json()
+                                return {
+                                    'followers': data.get('followers', {}).get('total', 0),
+                                    'following': 0,  # Not easily accessible via API
+                                    'playlists': 0,  # Would need additional API calls
+                                    'name': data.get('display_name', ''),
+                                    'profile_pic': data.get('images', [{}])[0].get('url', '') if data.get('images') else ''
+                                }
+    except Exception as e:
+        print(f"Spotify API error: {e}")
+    return None
 
 
 # --- SOCIAL MEDIA CHECKER ---
@@ -335,13 +459,34 @@ class SocialMediaChecker:
         if not config:
             return None
         
-        # Generate stats
-        stats = generate_fake_stats(platform, username)
+        # Fetch real data based on platform
+        data = None
+        if platform == "instagram":
+            data = await fetch_instagram_data(username)
+        elif platform == "tiktok":
+            data = await fetch_tiktok_data(username)
+        elif platform == "facebook":
+            data = await fetch_facebook_data(username)
+        elif platform == "x":
+            data = await fetch_x_data(username)
+        elif platform == "roblox":
+            data = await fetch_roblox_data(username)
+        elif platform == "spotify":
+            data = await fetch_spotify_data(username)
         
-        # Fetch profile picture
-        profile_pic = await fetch_profile_picture(username, platform)
+        if not data:
+            # Return error embed if user not found
+            embed = discord.Embed(
+                title=f"{config['emoji']} {config['display_name']} Profile",
+                description=f"User **@{username}** not found or profile is private.",
+                color=0xFF0000,
+                timestamp=discord.utils.utcnow()
+            )
+            embed.set_thumbnail(url=config['icon'])
+            embed.set_footer(text=f"Kinsec Social Checker • mi luv /rk")
+            return embed
         
-        # Create embed with detailed stats
+        # Create embed with real data
         embed = discord.Embed(
             title=f"{config['emoji']} {config['display_name']} Profile",
             description=f"**@{username}**",
@@ -353,63 +498,65 @@ class SocialMediaChecker:
         if platform == "instagram":
             embed.add_field(
                 name="📊 Statistics",
-                value=f"**Followers:** {format_number(stats['followers'])}\n"
-                      f"**Following:** {format_number(stats['following'])}\n"
-                      f"**Posts:** {format_number(stats['posts'])}\n"
-                      f"**Likes:** {format_number(stats['likes'])}",
+                value=f"**Followers:** {format_number(data.get('followers', 0))}\n"
+                      f"**Following:** {format_number(data.get('following', 0))}\n"
+                      f"**Posts:** {format_number(data.get('posts', 0))}",
                 inline=False
             )
+            if data.get('name'):
+                embed.add_field(name="Full Name", value=data['name'], inline=False)
             
         elif platform == "tiktok":
             embed.add_field(
                 name="📊 Statistics",
-                value=f"**Followers:** {format_number(stats['followers'])}\n"
-                      f"**Following:** {format_number(stats['following'])}\n"
-                      f"**Posts:** {format_number(stats['posts'])}\n"
-                      f"**Likes:** {format_number(stats['likes'])}\n"
-                      f"**Views:** {format_number(stats['views'])}",
+                value=f"**Followers:** {format_number(data.get('followers', 0))}\n"
+                      f"**Following:** {format_number(data.get('following', 0))}\n"
+                      f"**Posts:** {format_number(data.get('posts', 0))}\n"
+                      f"**Likes:** {format_number(data.get('likes', 0))}",
                 inline=False
             )
+            if data.get('name'):
+                embed.add_field(name="Nickname", value=data['name'], inline=False)
             
         elif platform == "facebook":
             embed.add_field(
                 name="📊 Statistics",
-                value=f"**Followers:** {format_number(stats['followers'])}\n"
-                      f"**Following:** {format_number(stats['following'])}\n"
-                      f"**Posts:** {format_number(stats['posts'])}\n"
-                      f"**Likes:** {format_number(stats['likes'])}",
+                value=f"**Profile Found**",
                 inline=False
             )
+            if data.get('name'):
+                embed.add_field(name="Name", value=data['name'], inline=False)
             
         elif platform == "x":
             embed.add_field(
                 name="📊 Statistics",
-                value=f"**Followers:** {format_number(stats['followers'])}\n"
-                      f"**Following:** {format_number(stats['following'])}\n"
-                      f"**Posts:** {format_number(stats['posts'])}\n"
-                      f"**Likes:** {format_number(stats['likes'])}",
+                value=f"**Followers:** {format_number(data.get('followers', 0))}\n"
+                      f"**Following:** {format_number(data.get('following', 0))}\n"
+                      f"**Posts:** {format_number(data.get('posts', 0))}\n"
+                      f"**Likes:** {format_number(data.get('likes', 0))}",
                 inline=False
             )
+            if data.get('name'):
+                embed.add_field(name="Display Name", value=data['name'], inline=False)
             
         elif platform == "roblox":
             embed.add_field(
                 name="📊 Statistics",
-                value=f"**Followers:** {format_number(stats['followers'])}\n"
-                      f"**Following:** {format_number(stats['following'])}\n"
-                      f"**Items:** {format_number(stats['posts'])}\n"
-                      f"**Visits:** {format_number(stats['visits'])}",
+                value=f"**Followers:** {format_number(data.get('followers', 0))}\n"
+                      f"**Items:** {format_number(data.get('posts', 0))}",
                 inline=False
             )
+            if data.get('name'):
+                embed.add_field(name="Username", value=data['name'], inline=False)
             
         elif platform == "spotify":
             embed.add_field(
                 name="📊 Statistics",
-                value=f"**Followers:** {format_number(stats['followers'])}\n"
-                      f"**Following:** {format_number(stats['following'])}\n"
-                      f"**Playlists:** {format_number(stats['playlists'])}\n"
-                      f"**Tracks:** {format_number(stats['tracks'])}",
+                value=f"**Followers:** {format_number(data.get('followers', 0))}",
                 inline=False
             )
+            if data.get('name'):
+                embed.add_field(name="Display Name", value=data['name'], inline=False)
         
         # Add status
         embed.add_field(
@@ -419,8 +566,8 @@ class SocialMediaChecker:
         )
         
         # Set profile picture as thumbnail (top right)
-        if profile_pic:
-            embed.set_thumbnail(url=profile_pic)
+        if data.get('profile_pic'):
+            embed.set_thumbnail(url=data['profile_pic'])
         else:
             embed.set_thumbnail(url=config['icon'])
         
@@ -442,7 +589,6 @@ async def presence_loop():
         for vc in g.voice_channels
     )
     
-    # Create streaming status with rotating activities
     activities = [
         discord.Streaming(
             name="Kinsec Security • mi luv /rk",
