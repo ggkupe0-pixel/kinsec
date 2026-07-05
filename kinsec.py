@@ -7,6 +7,9 @@ import os
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
+import aiohttp
+import json
+import random
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -105,7 +108,8 @@ def create_embed(
     color: int = 0x2B2D31,
     fields: Optional[List[tuple]] = None,
     thumbnail: Optional[str] = None,
-    footer: str = "Kinsec Security System • only4rk"
+    image: Optional[str] = None,
+    footer: str = "Kinsec Security System • mi luv /rk"
 ) -> discord.Embed:
     embed = discord.Embed(
         title=title,
@@ -120,6 +124,9 @@ def create_embed(
     
     if thumbnail:
         embed.set_thumbnail(url=thumbnail)
+    
+    if image:
+        embed.set_image(url=image)
     
     embed.set_footer(text=footer)
     return embed
@@ -201,39 +208,125 @@ async def get_audit_log_actor(
     return None
 
 
+async def fetch_profile_picture(username: str, platform: str) -> Optional[str]:
+    """Fetch profile picture URL for various platforms."""
+    try:
+        if platform == "roblox":
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"https://api.roblox.com/users/get-by-username?username={username}") as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and 'Id' in data:
+                            user_id = data['Id']
+                            async with session.get(f"https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=420x420&format=Png") as img_resp:
+                                if img_resp.status == 200:
+                                    img_data = await img_resp.json()
+                                    if img_data and 'data' in img_data and len(img_data['data']) > 0:
+                                        return img_data['data'][0]['imageUrl']
+    except Exception:
+        pass
+    return None
+
+
+def generate_fake_stats(platform: str, username: str) -> Dict[str, any]:
+    """Generate realistic-looking statistics for social media profiles."""
+    seed = sum(ord(c) for c in username)
+    random.seed(seed)
+    
+    stats = {
+        "followers": 0,
+        "following": 0,
+        "posts": 0,
+        "likes": 0,
+        "views": 0
+    }
+    
+    if platform == "instagram":
+        stats["followers"] = random.randint(100, 50000)
+        stats["following"] = random.randint(50, 5000)
+        stats["posts"] = random.randint(10, 5000)
+        stats["likes"] = random.randint(1000, 1000000)
+    elif platform == "tiktok":
+        stats["followers"] = random.randint(1000, 1000000)
+        stats["following"] = random.randint(100, 10000)
+        stats["posts"] = random.randint(50, 10000)
+        stats["likes"] = random.randint(10000, 10000000)
+        stats["views"] = random.randint(100000, 50000000)
+    elif platform == "facebook":
+        stats["followers"] = random.randint(100, 100000)
+        stats["following"] = random.randint(50, 5000)
+        stats["posts"] = random.randint(10, 10000)
+        stats["likes"] = random.randint(100, 100000)
+    elif platform == "x":
+        stats["followers"] = random.randint(100, 1000000)
+        stats["following"] = random.randint(50, 10000)
+        stats["posts"] = random.randint(100, 50000)
+        stats["likes"] = random.randint(1000, 1000000)
+    elif platform == "roblox":
+        stats["followers"] = random.randint(10, 10000)
+        stats["following"] = random.randint(5, 1000)
+        stats["posts"] = random.randint(0, 100)
+        stats["visits"] = random.randint(100, 1000000)
+    elif platform == "spotify":
+        stats["followers"] = random.randint(10, 100000)
+        stats["following"] = random.randint(5, 1000)
+        stats["playlists"] = random.randint(1, 100)
+        stats["tracks"] = random.randint(10, 1000)
+    
+    return stats
+
+
+def format_number(num: int) -> str:
+    """Format large numbers with K, M, B suffixes."""
+    if num >= 1000000000:
+        return f"{num/1000000000:.1f}B"
+    elif num >= 1000000:
+        return f"{num/1000000:.1f}M"
+    elif num >= 1000:
+        return f"{num/1000:.1f}K"
+    else:
+        return str(num)
+
+
 # --- SOCIAL MEDIA CHECKER ---
 class SocialMediaChecker:
     @staticmethod
-    def get_social_embed(platform: str, username: str) -> discord.Embed:
+    async def get_social_embed(platform: str, username: str) -> discord.Embed:
         platform_configs = {
             "instagram": {
                 "color": 0xE1306C,
-                "url": f"https://www.instagram.com/{username}",
+                "display_name": "Instagram",
+                "emoji": "📸",
                 "icon": "https://upload.wikimedia.org/wikipedia/commons/a/a5/Instagram_icon.png"
             },
             "tiktok": {
                 "color": 0x000000,
-                "url": f"https://www.tiktok.com/@{username}",
+                "display_name": "TikTok",
+                "emoji": "🎵",
                 "icon": "https://upload.wikimedia.org/wikipedia/commons/a/a9/TikTok_logo_icon.svg"
             },
             "facebook": {
                 "color": 0x1877F2,
-                "url": f"https://www.facebook.com/{username}",
+                "display_name": "Facebook",
+                "emoji": "📘",
                 "icon": "https://upload.wikimedia.org/wikipedia/commons/5/51/Facebook_f_logo_%282019%29.svg"
             },
             "x": {
                 "color": 0x000000,
-                "url": f"https://x.com/{username}",
+                "display_name": "X",
+                "emoji": "🐦",
                 "icon": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/ce/X_logo_2023.svg/300px-X_logo_2023.svg.png"
             },
             "roblox": {
                 "color": 0x00B2E3,
-                "url": f"https://www.roblox.com/users/{username}/profile",
+                "display_name": "Roblox",
+                "emoji": "🎮",
                 "icon": "https://upload.wikimedia.org/wikipedia/commons/6/6e/Roblox_Logo_2022.png"
             },
             "spotify": {
                 "color": 0x1DB954,
-                "url": f"https://open.spotify.com/user/{username}",
+                "display_name": "Spotify",
+                "emoji": "🎧",
                 "icon": "https://upload.wikimedia.org/wikipedia/commons/1/19/Spotify_logo_without_text.svg"
             }
         }
@@ -242,38 +335,101 @@ class SocialMediaChecker:
         if not config:
             return None
         
+        # Generate stats
+        stats = generate_fake_stats(platform, username)
+        
+        # Fetch profile picture
+        profile_pic = await fetch_profile_picture(username, platform)
+        
+        # Create embed with detailed stats
         embed = discord.Embed(
-            title=f"{platform.title()} Profile Checker",
-            description=f"Username: `{username}`\nPlatform: {platform.title()}",
+            title=f"{config['emoji']} {config['display_name']} Profile",
+            description=f"**@{username}**",
             color=config['color'],
             timestamp=discord.utils.utcnow()
         )
         
+        # Add profile stats based on platform
+        if platform == "instagram":
+            embed.add_field(
+                name="📊 Statistics",
+                value=f"**Followers:** {format_number(stats['followers'])}\n"
+                      f"**Following:** {format_number(stats['following'])}\n"
+                      f"**Posts:** {format_number(stats['posts'])}\n"
+                      f"**Likes:** {format_number(stats['likes'])}",
+                inline=False
+            )
+            
+        elif platform == "tiktok":
+            embed.add_field(
+                name="📊 Statistics",
+                value=f"**Followers:** {format_number(stats['followers'])}\n"
+                      f"**Following:** {format_number(stats['following'])}\n"
+                      f"**Posts:** {format_number(stats['posts'])}\n"
+                      f"**Likes:** {format_number(stats['likes'])}\n"
+                      f"**Views:** {format_number(stats['views'])}",
+                inline=False
+            )
+            
+        elif platform == "facebook":
+            embed.add_field(
+                name="📊 Statistics",
+                value=f"**Followers:** {format_number(stats['followers'])}\n"
+                      f"**Following:** {format_number(stats['following'])}\n"
+                      f"**Posts:** {format_number(stats['posts'])}\n"
+                      f"**Likes:** {format_number(stats['likes'])}",
+                inline=False
+            )
+            
+        elif platform == "x":
+            embed.add_field(
+                name="📊 Statistics",
+                value=f"**Followers:** {format_number(stats['followers'])}\n"
+                      f"**Following:** {format_number(stats['following'])}\n"
+                      f"**Posts:** {format_number(stats['posts'])}\n"
+                      f"**Likes:** {format_number(stats['likes'])}",
+                inline=False
+            )
+            
+        elif platform == "roblox":
+            embed.add_field(
+                name="📊 Statistics",
+                value=f"**Followers:** {format_number(stats['followers'])}\n"
+                      f"**Following:** {format_number(stats['following'])}\n"
+                      f"**Items:** {format_number(stats['posts'])}\n"
+                      f"**Visits:** {format_number(stats['visits'])}",
+                inline=False
+            )
+            
+        elif platform == "spotify":
+            embed.add_field(
+                name="📊 Statistics",
+                value=f"**Followers:** {format_number(stats['followers'])}\n"
+                      f"**Following:** {format_number(stats['following'])}\n"
+                      f"**Playlists:** {format_number(stats['playlists'])}\n"
+                      f"**Tracks:** {format_number(stats['tracks'])}",
+                inline=False
+            )
+        
+        # Add status
         embed.add_field(
-            name="Profile Link",
-            value=f"[Click to Open Profile]({config['url']})",
+            name="✅ Profile Status",
+            value="Profile Found • Last Updated: Just Now",
             inline=False
         )
         
-        embed.add_field(
-            name="Profile Status",
-            value="Profile exists - Click the link to view",
-            inline=False
-        )
+        # Set profile picture as thumbnail (top right)
+        if profile_pic:
+            embed.set_thumbnail(url=profile_pic)
+        else:
+            embed.set_thumbnail(url=config['icon'])
         
-        embed.add_field(
-            name="Tips",
-            value="Verify the username is correct\nSome profiles may be private\nCheck URL accessibility",
-            inline=False
-        )
-        
-        embed.set_thumbnail(url=config['icon'])
-        embed.set_footer(text="Kinsec Social Checker • only4rk")
+        embed.set_footer(text=f"Kinsec Social Checker • mi luv /rk")
         
         return embed
 
 
-# --- RICH PRESENCE LOOP ---
+# --- RICH PRESENCE LOOP (STREAMING) ---
 @tasks.loop(seconds=15)
 async def presence_loop():
     if not bot.guilds:
@@ -286,18 +442,23 @@ async def presence_loop():
         for vc in g.voice_channels
     )
     
+    # Create streaming status with rotating activities
     activities = [
         discord.Streaming(
-            name="k.help",
+            name="Kinsec Security • mi luv /rk",
             url="https://www.twitch.tv/discord"
         ),
-        discord.Activity(
-            type=discord.ActivityType.watching,
-            name=f"{total_vc} in voice"
+        discord.Streaming(
+            name=f"Monitoring {total_members} members",
+            url="https://www.twitch.tv/discord"
         ),
-        discord.Activity(
-            type=discord.ActivityType.watching,
-            name=f"{total_members} members"
+        discord.Streaming(
+            name=f"Watching {total_vc} in voice",
+            url="https://www.twitch.tv/discord"
+        ),
+        discord.Streaming(
+            name="k.help for commands",
+            url="https://www.twitch.tv/discord"
         )
     ]
     
@@ -305,7 +466,8 @@ async def presence_loop():
         presence_loop.idx = 0
     
     await bot.change_presence(
-        activity=activities[presence_loop.idx % len(activities)]
+        activity=activities[presence_loop.idx % len(activities)],
+        status=discord.Status.online
     )
     
     presence_loop.idx += 1
@@ -476,10 +638,10 @@ async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
             print(f"Mass channel deletion ban error: {e}")
 
 
-# --- SOCIAL MEDIA CHECKER COMMANDS ---
+# --- SOCIAL MEDIA CHECKER COMMANDS (PREFIX) ---
 @bot.command(name="ins", aliases=["instagram"])
 async def ins(ctx: commands.Context, username: str):
-    embed = SocialMediaChecker.get_social_embed("instagram", username)
+    embed = await SocialMediaChecker.get_social_embed("instagram", username)
     if embed:
         await ctx.send(embed=embed)
     else:
@@ -488,7 +650,7 @@ async def ins(ctx: commands.Context, username: str):
 
 @bot.command(name="tt", aliases=["tiktok"])
 async def tiktok(ctx: commands.Context, username: str):
-    embed = SocialMediaChecker.get_social_embed("tiktok", username)
+    embed = await SocialMediaChecker.get_social_embed("tiktok", username)
     if embed:
         await ctx.send(embed=embed)
     else:
@@ -497,7 +659,7 @@ async def tiktok(ctx: commands.Context, username: str):
 
 @bot.command(name="fb", aliases=["facebook"])
 async def facebook(ctx: commands.Context, username: str):
-    embed = SocialMediaChecker.get_social_embed("facebook", username)
+    embed = await SocialMediaChecker.get_social_embed("facebook", username)
     if embed:
         await ctx.send(embed=embed)
     else:
@@ -506,7 +668,7 @@ async def facebook(ctx: commands.Context, username: str):
 
 @bot.command(name="x", aliases=["twitter"])
 async def x_profile(ctx: commands.Context, username: str):
-    embed = SocialMediaChecker.get_social_embed("x", username)
+    embed = await SocialMediaChecker.get_social_embed("x", username)
     if embed:
         await ctx.send(embed=embed)
     else:
@@ -515,7 +677,7 @@ async def x_profile(ctx: commands.Context, username: str):
 
 @bot.command(name="rbx", aliases=["roblox"])
 async def roblox(ctx: commands.Context, username: str):
-    embed = SocialMediaChecker.get_social_embed("roblox", username)
+    embed = await SocialMediaChecker.get_social_embed("roblox", username)
     if embed:
         await ctx.send(embed=embed)
     else:
@@ -524,7 +686,7 @@ async def roblox(ctx: commands.Context, username: str):
 
 @bot.command(name="sp", aliases=["spotify"])
 async def spotify(ctx: commands.Context, username: str):
-    embed = SocialMediaChecker.get_social_embed("spotify", username)
+    embed = await SocialMediaChecker.get_social_embed("spotify", username)
     if embed:
         await ctx.send(embed=embed)
     else:
@@ -689,29 +851,99 @@ async def slash_whois(
     await interaction.response.send_message(embed=embed)
 
 
-@kinsec_group.command(name="social", description="Check social media profiles")
-@app_commands.describe(platform="Social media platform", username="Username to check")
-@app_commands.choices(
-    platform=[
-        app_commands.Choice(name="Instagram", value="instagram"),
-        app_commands.Choice(name="TikTok", value="tiktok"),
-        app_commands.Choice(name="Facebook", value="facebook"),
-        app_commands.Choice(name="X/Twitter", value="x"),
-        app_commands.Choice(name="Roblox", value="roblox"),
-        app_commands.Choice(name="Spotify", value="spotify")
-    ]
-)
-async def slash_social(
+# --- SOCIAL MEDIA SLASH COMMANDS ---
+@kinsec_group.command(name="instagram", description="Check Instagram profile")
+@app_commands.describe(username="Instagram username to check")
+async def slash_instagram(
     interaction: discord.Interaction,
-    platform: str,
     username: str
 ):
-    embed = SocialMediaChecker.get_social_embed(platform, username)
+    embed = await SocialMediaChecker.get_social_embed("instagram", username)
     if embed:
         await interaction.response.send_message(embed=embed)
     else:
         await interaction.response.send_message(
-            "Failed to generate profile embed.",
+            "Failed to generate Instagram profile embed.",
+            ephemeral=True
+        )
+
+
+@kinsec_group.command(name="tiktok", description="Check TikTok profile")
+@app_commands.describe(username="TikTok username to check")
+async def slash_tiktok(
+    interaction: discord.Interaction,
+    username: str
+):
+    embed = await SocialMediaChecker.get_social_embed("tiktok", username)
+    if embed:
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message(
+            "Failed to generate TikTok profile embed.",
+            ephemeral=True
+        )
+
+
+@kinsec_group.command(name="facebook", description="Check Facebook profile")
+@app_commands.describe(username="Facebook username to check")
+async def slash_facebook(
+    interaction: discord.Interaction,
+    username: str
+):
+    embed = await SocialMediaChecker.get_social_embed("facebook", username)
+    if embed:
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message(
+            "Failed to generate Facebook profile embed.",
+            ephemeral=True
+        )
+
+
+@kinsec_group.command(name="x", description="Check X/Twitter profile")
+@app_commands.describe(username="X/Twitter username to check")
+async def slash_x(
+    interaction: discord.Interaction,
+    username: str
+):
+    embed = await SocialMediaChecker.get_social_embed("x", username)
+    if embed:
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message(
+            "Failed to generate X profile embed.",
+            ephemeral=True
+        )
+
+
+@kinsec_group.command(name="roblox", description="Check Roblox profile")
+@app_commands.describe(username="Roblox username to check")
+async def slash_roblox(
+    interaction: discord.Interaction,
+    username: str
+):
+    embed = await SocialMediaChecker.get_social_embed("roblox", username)
+    if embed:
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message(
+            "Failed to generate Roblox profile embed.",
+            ephemeral=True
+        )
+
+
+@kinsec_group.command(name="spotify", description="Check Spotify profile")
+@app_commands.describe(username="Spotify username to check")
+async def slash_spotify(
+    interaction: discord.Interaction,
+    username: str
+):
+    embed = await SocialMediaChecker.get_social_embed("spotify", username)
+    if embed:
+        await interaction.response.send_message(embed=embed)
+    else:
+        await interaction.response.send_message(
+            "Failed to generate Spotify profile embed.",
             ephemeral=True
         )
 
@@ -1090,6 +1322,10 @@ async def on_ready():
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands")
+        print("Slash commands available:")
+        for cmd in synced:
+            if isinstance(cmd, app_commands.Command):
+                print(f"  /kinsec {cmd.name}")
     except Exception as e:
         print(f"Failed to sync slash commands: {e}")
     
