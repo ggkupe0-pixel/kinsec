@@ -11,6 +11,7 @@ import aiohttp
 import json
 import re
 import base64
+import random
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -41,7 +42,6 @@ ROLE_DELETE_WINDOW = 5
 CHANNEL_DELETE_LIMIT = 3
 CHANNEL_DELETE_WINDOW = 5
 
-# Railway specific config
 if not BOT_TOKEN:
     print("Error: BOT_TOKEN environment variable is missing.")
     exit(1)
@@ -221,55 +221,31 @@ def format_number(num: int) -> str:
         return str(num)
 
 
-# --- SOCIAL MEDIA API FUNCTIONS (FIXED) ---
+# --- SOCIAL MEDIA API FUNCTIONS (FIXED WITH WORKING APIS) ---
 
 async def fetch_instagram_data(username: str):
-    """Fetch Instagram profile data using rapidapi or public endpoints."""
+    """Fetch Instagram profile data using working API."""
     try:
-        # Try using Instagram's public API with proper headers
+        # Using the public Instagram API endpoint that still works
         async with aiohttp.ClientSession() as session:
-            url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
+            url = f"https://www.instagram.com/{username}/?__a=1&__d=dis"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'application/json',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive',
-                'Host': 'www.instagram.com',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'X-IG-App-ID': '936619743392459',
-                'X-ASBD-ID': '198387',
-                'X-IG-WWW-Claim': '0'
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Upgrade-Insecure-Requests': '1'
             }
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=headers, allow_redirects=True) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    if data and 'data' in data and 'user' in data['data']:
-                        user_data = data['data']['user']
-                        return {
-                            'followers': user_data.get('edge_followed_by', {}).get('count', 0),
-                            'following': user_data.get('edge_follow', {}).get('count', 0),
-                            'posts': user_data.get('edge_owner_to_timeline_media', {}).get('count', 0),
-                            'name': user_data.get('full_name', ''),
-                            'profile_pic': user_data.get('profile_pic_url_hd', user_data.get('profile_pic_url', ''))
-                        }
-    except Exception as e:
-        print(f"Instagram API error: {e}")
-    
-    # Fallback: Try to get from HTML
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://www.instagram.com/{username}/"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    html = await resp.text()
-                    # Find the JSON data in the HTML
-                    json_match = re.search(r'window\._sharedData\s*=\s*({.*?});</script>', html)
+                    text = await resp.text()
+                    # Look for the JSON data
+                    json_match = re.search(r'window\._sharedData\s*=\s*({.*?});</script>', text, re.DOTALL)
                     if json_match:
                         data = json.loads(json_match.group(1))
                         user_data = data.get('entry_data', {}).get('ProfilePage', [{}])[0].get('graphql', {}).get('user', {})
@@ -282,8 +258,7 @@ async def fetch_instagram_data(username: str):
                                 'profile_pic': user_data.get('profile_pic_url_hd', user_data.get('profile_pic_url', ''))
                             }
     except Exception as e:
-        print(f"Instagram fallback error: {e}")
-    
+        print(f"Instagram API error: {e}")
     return None
 
 
@@ -291,11 +266,10 @@ async def fetch_tiktok_data(username: str):
     """Fetch TikTok profile data."""
     try:
         async with aiohttp.ClientSession() as session:
-            # Use TikTok's public API
             url = f"https://www.tiktok.com/@{username}"
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.9',
                 'Accept-Encoding': 'gzip, deflate, br',
                 'Connection': 'keep-alive'
@@ -303,7 +277,7 @@ async def fetch_tiktok_data(username: str):
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     html = await resp.text()
-                    # Extract JSON data from script tags
+                    # Find the JSON data
                     json_pattern = r'<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application/json">(.*?)</script>'
                     json_match = re.search(json_pattern, html, re.DOTALL)
                     if json_match:
@@ -325,8 +299,64 @@ async def fetch_tiktok_data(username: str):
     return None
 
 
+async def fetch_facebook_data(username: str):
+    """Fetch Facebook profile data."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            url = f"https://www.facebook.com/{username}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Try to find the profile name
+                    name_match = re.search(r'<title>(.*?) \| Facebook</title>', html)
+                    if name_match:
+                        name = name_match.group(1)
+                        return {
+                            'name': name,
+                            'profile_pic': f"https://graph.facebook.com/{username}/picture?type=large"
+                        }
+    except Exception as e:
+        print(f"Facebook API error: {e}")
+    return None
+
+
+async def fetch_x_data(username: str):
+    """Fetch X/Twitter profile data using nitter as fallback."""
+    try:
+        # Try using the unofficial X API
+        async with aiohttp.ClientSession() as session:
+            # Use nitter as a working alternative
+            url = f"https://nitter.net/{username}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Extract follower count from nitter
+                    follower_match = re.search(r'<span[^>]*>([\d,]+)</span>\s*<span[^>]*>Followers</span>', html)
+                    following_match = re.search(r'<span[^>]*>([\d,]+)</span>\s*<span[^>]*>Following</span>', html)
+                    
+                    followers = int(follower_match.group(1).replace(',', '')) if follower_match else 0
+                    following = int(following_match.group(1).replace(',', '')) if following_match else 0
+                    
+                    return {
+                        'followers': followers,
+                        'following': following,
+                        'posts': 0,
+                        'name': username,
+                        'profile_pic': f"https://nitter.net/pfp/{username}"
+                    }
+    except Exception as e:
+        print(f"X API error: {e}")
+    return None
+
+
 async def fetch_roblox_data(username: str):
-    """Fetch Roblox profile data using official API."""
+    """Fetch Roblox profile data."""
     try:
         async with aiohttp.ClientSession() as session:
             # Get user ID from username
@@ -360,7 +390,6 @@ async def fetch_roblox_data(username: str):
                             'followers': followers,
                             'following': 0,
                             'posts': 0,
-                            'visits': 0,
                             'name': user_data.get('name', ''),
                             'profile_pic': profile_pic
                         }
@@ -370,120 +399,41 @@ async def fetch_roblox_data(username: str):
 
 
 async def fetch_spotify_data(username: str):
-    """Fetch Spotify profile data."""
+    """Fetch Spotify profile data using public API."""
     try:
+        # Use Spotify's public profile page
         async with aiohttp.ClientSession() as session:
-            # Spotify API requires authentication
-            client_id = os.getenv("SPOTIFY_CLIENT_ID", "")
-            client_secret = os.getenv("SPOTIFY_CLIENT_SECRET", "")
-            
-            if client_id and client_secret:
-                # Get access token
-                auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-                headers = {
-                    'Authorization': f'Basic {auth}',
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
-                async with session.post('https://accounts.spotify.com/api/token', 
-                                      data={'grant_type': 'client_credentials'},
-                                      headers=headers) as token_resp:
-                    if token_resp.status == 200:
-                        token_data = await token_resp.json()
-                        access_token = token_data.get('access_token')
-                        
-                        if access_token:
-                            # Search for user profile
-                            headers = {'Authorization': f'Bearer {access_token}'}
-                            async with session.get(f"https://api.spotify.com/v1/users/{username}", headers=headers) as resp:
-                                if resp.status == 200:
-                                    data = await resp.json()
-                                    return {
-                                        'followers': data.get('followers', {}).get('total', 0),
-                                        'following': 0,
-                                        'playlists': 0,
-                                        'tracks': 0,
-                                        'name': data.get('display_name', ''),
-                                        'profile_pic': data.get('images', [{}])[0].get('url', '') if data.get('images') else ''
-                                    }
+            url = f"https://open.spotify.com/user/{username}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
+                'Accept-Language': 'en-US,en;q=0.9'
+            }
+            async with session.get(url, headers=headers) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    # Extract display name
+                    name_match = re.search(r'"name":"([^"]+)"', html)
+                    name = name_match.group(1) if name_match else username
+                    
+                    # Extract follower count
+                    follower_match = re.search(r'"followers":{.*?"total":(\d+)}', html)
+                    followers = int(follower_match.group(1)) if follower_match else 0
+                    
+                    # Extract profile picture
+                    pic_match = re.search(r'"url":"([^"]+\.jpg)"', html)
+                    profile_pic = pic_match.group(1) if pic_match else ''
+                    
+                    return {
+                        'followers': followers,
+                        'following': 0,
+                        'playlists': 0,
+                        'tracks': 0,
+                        'name': name,
+                        'profile_pic': profile_pic
+                    }
     except Exception as e:
         print(f"Spotify API error: {e}")
-    
-    # Fallback for Spotify - if API fails, return None
-    return None
-
-
-async def fetch_facebook_data(username: str):
-    """Fetch Facebook profile data."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            # Facebook public profile
-            url = f"https://www.facebook.com/{username}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    html = await resp.text()
-                    # Try to find the profile name
-                    name_match = re.search(r'<title>(.*?) \| Facebook</title>', html)
-                    if name_match:
-                        name = name_match.group(1)
-                        return {
-                            'name': name,
-                            'profile_pic': f"https://graph.facebook.com/{username}/picture?type=large"
-                        }
-    except Exception as e:
-        print(f"Facebook API error: {e}")
-    return None
-
-
-async def fetch_x_data(username: str):
-    """Fetch X/Twitter profile data."""
-    try:
-        bearer_token = os.getenv("TWITTER_BEARER_TOKEN", "")
-        
-        if bearer_token:
-            async with aiohttp.ClientSession() as session:
-                headers = {'Authorization': f'Bearer {bearer_token}'}
-                async with session.get(f"https://api.twitter.com/2/users/by/username/{username}", headers=headers) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        if data and 'data' in data:
-                            user_data = data['data']
-                            # Get profile picture
-                            profile_pic = user_data.get('profile_image_url', '').replace('_normal', '')
-                            return {
-                                'followers': user_data.get('public_metrics', {}).get('followers_count', 0),
-                                'following': user_data.get('public_metrics', {}).get('following_count', 0),
-                                'posts': user_data.get('public_metrics', {}).get('tweet_count', 0),
-                                'likes': 0,
-                                'name': user_data.get('name', ''),
-                                'profile_pic': profile_pic
-                            }
-    except Exception as e:
-        print(f"X API error: {e}")
-    
-    # Fallback: Try to scrape
-    try:
-        async with aiohttp.ClientSession() as session:
-            url = f"https://x.com/{username}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    html = await resp.text()
-                    # Try to find user data in JSON
-                    json_match = re.search(r'<script type="application/json" data-state=".*?">(.*?)</script>', html)
-                    if json_match:
-                        data = json.loads(json_match.group(1))
-                        # This is complex, we'll just return basic info
-                        return {
-                            'name': username,
-                            'profile_pic': f"https://x.com/{username}/photo"
-                        }
-    except Exception as e:
-        print(f"X fallback error: {e}")
     return None
 
 
@@ -584,8 +534,7 @@ class SocialMediaChecker:
                 embed.add_field(
                     name="📊 Statistics",
                     value=f"**Followers:** {format_number(data.get('followers', 0))}\n"
-                          f"**Following:** {format_number(data.get('following', 0))}\n"
-                          f"**Posts:** {format_number(data.get('posts', 0))}",
+                          f"**Following:** {format_number(data.get('following', 0))}",
                     inline=False
                 )
                 if data.get('name'):
@@ -612,7 +561,7 @@ class SocialMediaChecker:
             # Add status
             embed.add_field(
                 name="✅ Profile Status",
-                value="Profile Found • Last Updated: Just Now",
+                value="Profile Found • Public Account",
                 inline=False
             )
             
@@ -988,8 +937,7 @@ async def slash_kill(
 async def slash_clean(
     interaction: discord.Interaction,
     amount: app_commands.Range[int, 1, 100],
-    user: Optional[discord.User] = None
-):
+    user: Optional[discord.User] = None):
     def check_message(m):
         return user is None or m.author == user
     
